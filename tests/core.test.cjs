@@ -1,0 +1,12 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const C=require('../core.js');
+const stamp='2026-10-27T00:00:00.000Z';
+const p={id:'p',updatedAt:stamp,name:'試験豆',form:'beans'};
+const b={id:'b',updatedAt:stamp,productId:'p',date:'2026-10-27',overall:4};
+const dataset=()=>C.validate({schema:C.schema,products:[p],brews:[b]});
+test('JSON round trip and identical repeated import do not duplicate',()=>{const d=dataset();const m=C.merge(d,JSON.parse(JSON.stringify(d)));assert.deepEqual(m.data,d);assert.equal(m.conflicts.length,0);});
+test('additive merge preserves existing and adds new records',()=>{const a=dataset(),b=dataset();b.brews[0].id='b2';const m=C.merge(a,b);assert.equal(m.data.brews.length,2);assert.equal(m.conflicts.length,0);});
+test('divergent same-ID content requires explicit choice even with same timestamp',()=>{const a=dataset(),b=dataset();b.brews[0].overall=5;assert.equal(C.merge(a,b).conflicts.length,1);assert.equal(C.merge(a,b,{'brews:b':'incoming'}).data.brews[0].overall,5);assert.equal(C.merge(a,b,{'brews:b':'local'}).data.brews[0].overall,4);});
+test('delete tombstone is preserved and old backups cannot silently resurrect records',()=>{const a=dataset(),b=dataset();a.brews[0]={id:'b',updatedAt:stamp,deleted:true};assert.equal(C.merge(a,b).conflicts.length,1);assert.equal(C.merge(a,b,{'brews:b':'local'}).data.brews[0].deleted,true);assert.equal(C.live(a.brews).length,0);});
+test('invalid input, duplicate IDs, orphan references and out of range rating rejected',()=>{assert.throws(()=>C.validate({}));const d=dataset();d.products.push(d.products[0]);assert.throws(()=>C.validate(d));const orphan=dataset();orphan.brews[0].productId='missing';assert.throws(()=>C.validate(orphan));const bad=dataset();bad.brews[0].overall=6;assert.throws(()=>C.validate(bad));});
+test('unrated values do not lower averages, zero price stays zero',()=>{assert.equal(C.mean([{overall:4},{overall:null}],'overall'),4);assert.equal(C.mean([],'overall'),null);const d=dataset();d.products[0].price=0;assert.equal(C.validate(d).products[0].price,0);});
+test('ground coffee and hostile strings survive as plain data',()=>{const d=dataset();d.products[0].form='ground';d.products[0].name='<img src=x onerror=alert(1)>';assert.equal(C.validate(d).products[0].name,d.products[0].name);});
